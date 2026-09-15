@@ -11,15 +11,11 @@ jobs:
       - name: 检出构建仓库
         uses: actions/checkout@v4
 
-      - name: 安装基础编译依赖
+      - name: 安装基础依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
-            gcc-aarch64-linux-gnu \
-            gcc-arm-linux-gnueabi \
-            binutils-aarch64-linux-gnu \
-            binutils-arm-linux-gnueabi \
             libncurses5-dev \
             libssl-dev \
             bc \
@@ -36,16 +32,16 @@ jobs:
               sudo ln -sf $(which python3) /usr/bin/python2
           fi
 
-      - name: 下载 AOSP Clang 9.0 与内核源码
+      - name: 获取 Proton-Clang 工具链与小米6内核源码
         run: |
-          # 下载官方标准 AOSP Clang 9 (Android Pie/Q 原生编译链)
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b android-9.0.0_r61 clang
+          # 使用免依赖的 Proton Clang（自带 binutils 与兼容运行时）
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
           
-          # 克隆小米6内核源码
+          # 克隆小米6官方开源分支
           git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git -b sagit-p-oss kernel
           cd kernel
 
-          # 修复 GCC 11 主机工具链编译旧版 DTC 重复定义错误
+          # 修复 GCC/Host 工具编译旧版 DTC 重复定义
           sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' scripts/dtc/dtc-lexer.lex.c_shipped 2>/dev/null || true
           sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' scripts/dtc/dtc-lexer.l 2>/dev/null || true
 
@@ -62,32 +58,39 @@ jobs:
               sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           fi
 
-      - name: 配置内核并禁用模块强制校验
+      - name: 配置内核并彻底关闭签名校验与 Warning 阻断
         run: |
           cd kernel
           cp ../sagit_defconfig arch/arm64/configs/sagit_user_defconfig
 
-          # 关闭签名校验，保证 Wi-Fi / 音频正常工作
+          # 禁用模块签名校验
           scripts/config --file arch/arm64/configs/sagit_user_defconfig --disable CONFIG_MODULE_SIG_FORCE
           scripts/config --file arch/arm64/configs/sagit_user_defconfig --disable CONFIG_MODULE_SIG_ALL
+          
+          # 启用 KSU 配置
           scripts/config --file arch/arm64/configs/sagit_user_defconfig --enable CONFIG_KSU
 
       - name: 执行内核编译
         run: |
-          export PATH="${GITHUB_WORKSPACE}/clang/clang-r353983c/bin:$PATH"
+          # 引入 Proton Clang 工具链
+          export PATH="${GITHUB_WORKSPACE}/clang/bin:$PATH"
           export ARCH=arm64
           export SUBARCH=arm64
           export CC=clang
-          export CLANG_TRIPLE=aarch64-linux-gnu-
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-          export HOSTCFLAGS="-fcommon"
 
           cd kernel
           make sagit_user_defconfig
-          make -j$(nproc) HOSTCFLAGS="-fcommon" Image.gz-dtb modules
+          
+          # KCFLAGS 注入禁止把 Warning 当作 Error 停止编译的开关
+          make -j$(nproc) \
+            HOSTCFLAGS="-fcommon" \
+            KCFLAGS="-Wno-error -Wno-array-bounds" \
+            CONFIG_SECTION_MISMATCH_WARN_ONLY=y \
+            Image.gz-dtb modules
 
-      - name: 打包刷机卡刷包
+      - name: 打包卡刷包
         run: |
           git clone https://github.com/osm0sis/AnyKernel3.git AK3
           cp kernel/arch/arm64/boot/Image.gz-dtb AK3/
