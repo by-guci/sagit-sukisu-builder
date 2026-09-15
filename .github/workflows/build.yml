@@ -11,29 +11,27 @@ jobs:
       - name: 检出构建仓库
         uses: actions/checkout@v4
 
-      - name: 配置编译环境与依赖 (含 Python2 与 GCC-11 兼容项)
+      - name: 配置编译环境与 32 位兼容库
         run: |
+          sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y build-essential libncurses5 libncurses5-dev libssl-dev bc bison flex libelf-dev zip curl git ccache python2 python-is-python3
+          sudo apt-get install -y build-essential libncurses5 libncurses5-dev libssl-dev bc bison flex libelf-dev zip curl git ccache python2 python-is-python3 libc6:i386 libncurses5:i386 libstdc++6:i386 lib32z1
 
-          # 确保全局可执行 python2 命令
+          # 确保全局有 python2
           if ! which python2 >/dev/null; then
               sudo ln -sf $(which python3) /usr/bin/python2
           fi
 
       - name: 获取内核源码与交叉编译链
         run: |
-          # 源码克隆至根级目录
           git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git -b sagit-p-oss kernel
 
-          # 将交叉编译器直接存放在主工作目录下，避免路径多层嵌套
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc-arm64
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 gcc-arm32
 
       - name: 修复 Ubuntu 22.04 编译 4.4 内核的 DTC 冲突
         run: |
           cd kernel
-          # 修复 GCC 11+ 环境下 yylloc 重复定义问题
           sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' scripts/dtc/dtc-lexer.lex.c_shipped 2>/dev/null || true
           sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' scripts/dtc/dtc-lexer.l 2>/dev/null || true
 
@@ -43,7 +41,6 @@ jobs:
           git clone --depth=1 https://github.com/tiann/KernelSU.git KernelSU_SRC
           ln -s $(pwd)/KernelSU_SRC/kernel $(pwd)/drivers/kernelsu
 
-          # 配置 KSU 驱动构建入口
           if ! grep -q "CONFIG_KSU" drivers/Makefile; then
               echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
           fi
@@ -56,23 +53,22 @@ jobs:
           cd kernel
           cp ../sagit_defconfig arch/arm64/configs/sagit_user_defconfig
 
-          # 强制关闭模块强签名校验，防止 Wi-Fi/外置模块失效
           scripts/config --file arch/arm64/configs/sagit_user_defconfig --disable CONFIG_MODULE_SIG_FORCE
           scripts/config --file arch/arm64/configs/sagit_user_defconfig --disable CONFIG_MODULE_SIG_ALL
-          
-          # 启用 KSU 配置
           scripts/config --file arch/arm64/configs/sagit_user_defconfig --enable CONFIG_KSU
 
       - name: 执行编译
         run: |
-          # 导出绝对路径交叉编译器
+          # 将交叉编译器直接加入 PATH
+          export PATH="${GITHUB_WORKSPACE}/gcc-arm64/bin:${GITHUB_WORKSPACE}/gcc-arm32/bin:$PATH"
           export ARCH=arm64
           export SUBARCH=arm64
-          export CROSS_COMPILE="${GITHUB_WORKSPACE}/gcc-arm64/bin/aarch64-linux-android-"
-          export CROSS_COMPILE_ARM32="${GITHUB_WORKSPACE}/gcc-arm32/bin/arm-linux-androideabi-"
-
-          # 传递 HOSTCFLAGS 允许旧内核 scripts 兼容现代主机编译器
+          export CROSS_COMPILE=aarch64-linux-android-
+          export CROSS_COMPILE_ARM32=arm-linux-androideabi-
           export HOSTCFLAGS="-fcommon"
+
+          # 验证编译器能否正常执行
+          aarch64-linux-android-gcc -v
 
           cd kernel
           make sagit_user_defconfig
