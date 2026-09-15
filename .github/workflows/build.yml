@@ -29,8 +29,16 @@ jobs:
       - name: 集成 SukiSU-Ultra 驱动
         run: |
           cd kernel
-          # 注入 SukiSU 核心驱动驱动层
-          curl -LSs "https://raw.githubusercontent.com/RSUntangled/KernelSU/main/kernel/setup.sh" | bash -s main
+          # 直接拉取 SukiSU-Ultra 驱动源码到 drivers/kernelsu
+          git clone --depth=1 https://github.com/ShirkNeko/SukiSU-Ultra.git drivers/kernelsu || git clone --depth=1 https://github.com/tiann/KernelSU.git drivers/kernelsu
+
+          # 配置 KSU 驱动构建入口
+          if ! grep -q "CONFIG_KSU" drivers/Makefile; then
+              echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+          fi
+          if ! grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig; then
+              sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          fi
 
       - name: 应用导出的 config 并修复模块签名
         run: |
