@@ -5,21 +5,19 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    container:
-      image: ubuntu:18.04
+    runs-on: ubuntu-22.04
 
     steps:
       - name: 检出构建仓库
         uses: actions/checkout@v4
 
-      - name: 在18.04容器中配置编译环境
+      - name: 安装兼容构建依赖与 GCC-9 交叉工具链
         run: |
-          apt-get update
-          apt-get install -y \
+          sudo apt-get update
+          sudo apt-get install -y \
             build-essential \
-            gcc-aarch64-linux-gnu \
-            gcc-arm-linux-gnueabi \
+            gcc-9-aarch64-linux-gnu \
+            gcc-9-arm-linux-gnueabi \
             binutils-aarch64-linux-gnu \
             binutils-arm-linux-gnueabi \
             libncurses5-dev \
@@ -31,14 +29,29 @@ jobs:
             zip \
             curl \
             git \
-            python
+            python2 \
+            python-is-python3
 
-      - name: 拉取内核源码并挂载 SukiSU
+          # 软链接建立 aarch64-linux-gnu-gcc-9 别名映射
+          sudo update-alternatives --install /usr/bin/aarch64-linux-gnu-gcc aarch64-linux-gnu-gcc /usr/bin/aarch64-linux-gnu-gcc-9 100
+          sudo update-alternatives --install /usr/bin/arm-linux-gnueabi-gcc arm-linux-gnueabi-gcc /usr/bin/arm-linux-gnueabi-gcc-9 100
+
+          if ! which python2 >/dev/null; then
+              sudo ln -sf $(which python3) /usr/bin/python2
+          fi
+
+      - name: 拉取小米6内核源码与补丁
         run: |
           git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git -b sagit-p-oss kernel
           cd kernel
 
-          # 挂载 SukiSU 源码
+          # 修复 DTC yylloc 符号重复定义
+          sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' scripts/dtc/dtc-lexer.lex.c_shipped 2>/dev/null || true
+          sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' scripts/dtc/dtc-lexer.l 2>/dev/null || true
+
+      - name: 挂载 SukiSU 驱动目录
+        run: |
+          cd kernel
           git clone --depth=1 https://github.com/tiann/KernelSU.git KernelSU_SRC
           ln -s $(pwd)/KernelSU_SRC/kernel $(pwd)/drivers/kernelsu
 
@@ -49,12 +62,12 @@ jobs:
               sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           fi
 
-      - name: 注入配置并解除模块签名校验
+      - name: 配置内核并禁用模块签名
         run: |
           cd kernel
           cp ../sagit_defconfig arch/arm64/configs/sagit_user_defconfig
 
-          # 禁用强制签名，保证 Wi-Fi / 音频驱动正常
+          # 关闭签名校验以兼容现有闭源 Wi-Fi 驱动
           scripts/config --file arch/arm64/configs/sagit_user_defconfig --disable CONFIG_MODULE_SIG_FORCE
           scripts/config --file arch/arm64/configs/sagit_user_defconfig --disable CONFIG_MODULE_SIG_ALL
           scripts/config --file arch/arm64/configs/sagit_user_defconfig --enable CONFIG_KSU
@@ -66,9 +79,10 @@ jobs:
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export HOSTCFLAGS="-fcommon"
 
           make sagit_user_defconfig
-          make -j$(nproc) Image.gz-dtb modules
+          make -j$(nproc) HOSTCFLAGS="-fcommon" Image.gz-dtb modules
 
       - name: 打包刷机卡刷包
         run: |
