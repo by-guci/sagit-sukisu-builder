@@ -26,11 +26,14 @@ jobs:
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc-arm64
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 gcc-arm32
 
-      - name: 集成 SukiSU-Ultra 驱动
+      - name: 正确挂载 SukiSU 驱动目录
         run: |
           cd kernel
-          # 直接拉取 SukiSU-Ultra 驱动源码到 drivers/kernelsu
-          git clone --depth=1 https://github.com/ShirkNeko/SukiSU-Ultra.git drivers/kernelsu || git clone --depth=1 https://github.com/tiann/KernelSU.git drivers/kernelsu
+          # 建立独立的克隆目录
+          git clone --depth=1 https://github.com/tiann/KernelSU.git KernelSU_SRC
+
+          # 将真正的内核驱动目录软链接到 drivers/kernelsu
+          ln -s $(pwd)/KernelSU_SRC/kernel $(pwd)/drivers/kernelsu
 
           # 配置 KSU 驱动构建入口
           if ! grep -q "CONFIG_KSU" drivers/Makefile; then
@@ -52,7 +55,6 @@ jobs:
           
           # 启用 KSU 配置
           scripts/config --file arch/arm64/configs/sagit_user_defconfig --enable CONFIG_KSU
-          scripts/config --file arch/arm64/configs/sagit_user_defconfig --enable CONFIG_KSU_SUSFS
 
       - name: 执行编译
         run: |
