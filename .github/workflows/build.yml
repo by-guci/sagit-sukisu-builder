@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     steps:
       - name: 检出构建仓库
@@ -14,7 +14,7 @@ jobs:
       - name: 配置编译环境与依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libncurses5-dev libssl-dev bc bison flex libelf-dev zip curl git ccache
+          sudo apt-get install -y build-essential libncurses5 libncurses5-dev libncurses-dev libssl-dev bc bison flex libelf-dev zip curl git ccache
 
       - name: 获取内核源码与交叉编译链
         run: |
@@ -26,23 +26,19 @@ jobs:
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc-arm64
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 gcc-arm32
 
-      - name: 集成 SukiSU-Ultra 与 4.4 手动补丁
+      - name: 集成 SukiSU-Ultra 驱动
         run: |
           cd kernel
-          # 1. 注入 SukiSU 核心驱动驱动层
+          # 注入 SukiSU 核心驱动驱动层
           curl -LSs "https://raw.githubusercontent.com/RSUntangled/KernelSU/main/kernel/setup.sh" | bash -s main
-          
-          # 2. 4.4 内核缺乏动态挂钩支持，需在此引入 4.4 手动 Hook 补丁
-          # 若使用的是 SukiSU Ultra 分支，确保拉取其对应的 patch 文件：
-          # patch -p1 < 4.4_patch_for_ksu.patch
 
       - name: 应用导出的 config 并修复模块签名
         run: |
           cd kernel
-          # 将你导出的配置覆盖作为 defconfig
+          # 将你上传到仓库根目录的 sagit_defconfig 覆盖作为目标配置
           cp ../sagit_defconfig arch/arm64/configs/sagit_user_defconfig
 
-          # 强制关闭模块强签名校验，防止 Wi-Fi 驱动失效
+          # 强制关闭模块强签名校验，防止 Wi-Fi/声音模块失效
           scripts/config --file arch/arm64/configs/sagit_user_defconfig --disable CONFIG_MODULE_SIG_FORCE
           scripts/config --file arch/arm64/configs/sagit_user_defconfig --disable CONFIG_MODULE_SIG_ALL
           
@@ -66,7 +62,8 @@ jobs:
           git clone https://github.com/osm0sis/AnyKernel3.git AK3
           cp kernel/arch/arm64/boot/Image.gz-dtb AK3/
           
-          # 如果有编译生成更新的 wlan.ko，放进 AK3 模块目录
+          # 收集生成的驱动模块，防止签名改变导致外部模块不加载
+          mkdir -p AK3/modules/system/lib/modules/
           find kernel/ -name "*.ko" -exec cp {} AK3/modules/system/lib/modules/ \; 2>/dev/null || true
           
           cd AK3
