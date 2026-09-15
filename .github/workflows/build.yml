@@ -27,7 +27,7 @@ jobs:
           echo "TOOLCHAIN_64=$(pwd)/android-ndk-r14b/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin" >> $GITHUB_ENV
           echo "TOOLCHAIN_32=$(pwd)/android-ndk-r14b/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin" >> $GITHUB_ENV
 
-      - name: 拉取内核源码并修复高通缺陷与缺失宏
+      - name: 拉取内核源码并全量补齐头文件检索路径
         run: |
           git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git -b sagit-p-oss kernel
           cd kernel
@@ -39,15 +39,20 @@ jobs:
           # 2. 禁用高通 warning 阻断脚本
           find . -name "checkforwarnings.sh" -exec sh -c 'echo "#!/bin/sh" > "$1"; echo "exit 0" >> "$1"; chmod +x "$1"' _ {} \;
 
-          # 3. 修复 sdcardfs 缺失版本宏 (核心修复)
+          # 3. 补齐 sdcardfs 缺失的版本宏
           echo 'KBUILD_CFLAGS += -DSDCARDFS_VERSION=\"2.0\"' >> Makefile
 
-          # 4. 追加驱动内部相对头文件检索目录，不覆盖子模块变量
+          # 4. 彻底解决所有触控、激光测距、蓝牙、GPU 驱动相对头文件缺失
+          # 为所有驱动目录 Makefile 头部注入当前目录与上级目录索引
+          find drivers/ -name Makefile -exec sed -i '1i ccflags-y += -I$(src) -I$(src)/.. -I$(src)/inc' {} + 2>/dev/null || true
+
+          # 顶层补齐全局直索路径
           echo 'KBUILD_CFLAGS += -I$(srctree)/drivers/gpu/msm' >> Makefile
           echo 'KBUILD_CFLAGS += -I$(srctree)/drivers/bluetooth' >> Makefile
           echo 'KBUILD_CFLAGS += -I$(srctree)/drivers/input/touchscreen/st' >> Makefile
-          echo 'KBUILD_CFLAGS += -I$(srctree)/drivers/input/misc/vl53L0/inc' >> Makefile
+          echo 'KBUILD_CFLAGS += -I$(srctree)/drivers/input/touchscreen/st/fts_lib' >> Makefile
           echo 'KBUILD_CFLAGS += -I$(srctree)/drivers/input/misc/vl53L0' >> Makefile
+          echo 'KBUILD_CFLAGS += -I$(srctree)/drivers/input/misc/vl53L0/inc' >> Makefile
 
       - name: 挂载 SukiSU 驱动目录并注入 4.4 手动 Hook
         run: |
@@ -89,7 +94,7 @@ jobs:
           cd kernel
           make sagit_user_defconfig
           
-          # 绝不可使用 EXTRA_CFLAGS，由 Makefile 内部接管头文件；出错自动切换单线程锁定行号
+          # 并行编译；若发生中断，自动以单线程捕获具体报错行
           make -j$(nproc) Image.gz-dtb modules || make -j1 Image.gz-dtb
 
       - name: 打包卡刷包
