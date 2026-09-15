@@ -27,7 +27,7 @@ jobs:
           echo "TOOLCHAIN_64=$(pwd)/android-ndk-r14b/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin" >> $GITHUB_ENV
           echo "TOOLCHAIN_32=$(pwd)/android-ndk-r14b/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin" >> $GITHUB_ENV
 
-      - name: 拉取内核源码并修复高通已知头文件与环境缺陷
+      - name: 拉取内核源码并修复高通缺陷
         run: |
           git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git -b sagit-p-oss kernel
           cd kernel
@@ -39,16 +39,14 @@ jobs:
           # 2. 禁用高通 warning 阻断脚本
           find . -name "checkforwarnings.sh" -exec sh -c 'echo "#!/bin/sh" > "$1"; echo "exit 0" >> "$1"; chmod +x "$1"' _ {} \;
 
-          # 3. 修复 drivers/bluetooth 找不到 btfm_slim.h
-          sed -i '1i ccflags-y += -I$(src)' drivers/bluetooth/Makefile
-
-          # 4. 修复 drivers/gpu/msm 找不到 kgsl_trace.h (核心报错修复)
-          sed -i '1i ccflags-y += -I$(src)\nCFLAGS_kgsl_trace.o += -I$(src)' drivers/gpu/msm/Makefile
-
-          # 5. 顺手预防 touchscreen 与 android trace 的同类 trace include 缺失
+          # 3. 修复蓝牙与 staging 驱动头文件索引
+          sed -i '1i ccflags-y += -I$(src)' drivers/bluetooth/Makefile 2>/dev/null || true
           if [ -f drivers/staging/android/trace/Makefile ]; then
               sed -i '1i ccflags-y += -I$(src)' drivers/staging/android/trace/Makefile
           fi
+
+          # 4. 彻底解决 GPU 驱动找不到 kgsl_device.h 和 kgsl_trace.h：直接写入主 Makefile 顶层
+          echo "KBUILD_CFLAGS += -Idrivers/gpu/msm" >> Makefile
 
       - name: 挂载 SukiSU 驱动目录并注入 4.4 手动 Hook
         run: |
@@ -90,8 +88,9 @@ jobs:
           cd kernel
           make sagit_user_defconfig
           
-          # 并行编译，出错自动回显具体行号
-          make -j$(nproc) Image.gz-dtb modules || make -j1 Image.gz-dtb
+          # 传入 EXTRA_CFLAGS 强行穿透子模块，把 drivers/gpu/msm 作为全局头文件目录
+          make -j$(nproc) EXTRA_CFLAGS="-Idrivers/gpu/msm -Idrivers/bluetooth" Image.gz-dtb modules || \
+          make -j1 EXTRA_CFLAGS="-Idrivers/gpu/msm -Idrivers/bluetooth" Image.gz-dtb
 
       - name: 打包卡刷包
         run: |
