@@ -42,11 +42,13 @@ jobs:
           # 3. 补齐 sdcardfs 缺失的版本宏
           echo 'KBUILD_CFLAGS += -DSDCARDFS_VERSION=\"2.0\"' >> Makefile
 
-          # 4. 彻底解决所有触控、激光测距、蓝牙、GPU 驱动相对头文件缺失
-          # 为所有驱动目录 Makefile 头部注入当前目录与上级目录索引
+          # 4. 彻底解决 drivers/ 与 sound/ 子系统所有相对与内部头文件缺失
           find drivers/ -name Makefile -exec sed -i '1i ccflags-y += -I$(src) -I$(src)/.. -I$(src)/inc' {} + 2>/dev/null || true
+          find sound/ -name Makefile -exec sed -i '1i ccflags-y += -I$(src) -I$(src)/.. -I$(src)/qdsp6v2' {} + 2>/dev/null || true
 
-          # 顶层补齐全局直索路径
+          # 5. 顶层追加 sound 核心头文件全局检索路径 (解决 device_event.h 缺失)
+          echo 'KBUILD_CFLAGS += -I$(srctree)/sound/soc/msm' >> Makefile
+          echo 'KBUILD_CFLAGS += -I$(srctree)/sound/soc/msm/qdsp6v2' >> Makefile
           echo 'KBUILD_CFLAGS += -I$(srctree)/drivers/gpu/msm' >> Makefile
           echo 'KBUILD_CFLAGS += -I$(srctree)/drivers/bluetooth' >> Makefile
           echo 'KBUILD_CFLAGS += -I$(srctree)/drivers/input/touchscreen/st' >> Makefile
