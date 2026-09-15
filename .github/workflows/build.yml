@@ -21,11 +21,9 @@ jobs:
 
       - name: 获取 Android 官方 GCC 4.9 工具链 (NDK r14b)
         run: |
-          # 下载 Google 官方完整的 64 位独立 NDK 工具链
           wget -q https://dl.google.com/android/repository/android-ndk-r14b-linux-x86_64.zip
           unzip -q android-ndk-r14b-linux-x86_64.zip
           
-          # 提取 AArch64 与 ARM32 官方 GCC 4.9 路径
           echo "TOOLCHAIN_64=$(pwd)/android-ndk-r14b/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin" >> $GITHUB_ENV
           echo "TOOLCHAIN_32=$(pwd)/android-ndk-r14b/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin" >> $GITHUB_ENV
 
@@ -41,7 +39,7 @@ jobs:
           # 禁用高通 warning 阻断脚本
           find . -name "checkforwarnings.sh" -exec sh -c 'echo "#!/bin/sh" > "$1"; echo "exit 0" >> "$1"; chmod +x "$1"' _ {} \;
 
-      - name: 挂载 SukiSU 驱动目录
+      - name: 挂载 SukiSU 驱动目录并注入 4.4 手动 Hook
         run: |
           cd kernel
           git clone --depth=1 -b v0.9.5 https://github.com/tiann/KernelSU.git KernelSU_SRC
@@ -52,6 +50,11 @@ jobs:
           fi
           if ! grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig; then
               sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          fi
+
+          # 注入 4.4 Non-GKI 必需的系统调用 Hook (fs/exec.c)
+          if ! grep -q "ksu_handle_execveat" fs/exec.c; then
+              sed -i '/setup_new_exec(bprm);/i \extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\nksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);' fs/exec.c
           fi
 
       - name: 载入配置并关闭签名校验
@@ -75,7 +78,9 @@ jobs:
 
           cd kernel
           make sagit_user_defconfig
-          make -j$(nproc) Image.gz-dtb modules
+          
+          # 并行编译；若发生中断，立即自动以单线程重新执行，精准在日志末尾输出报错的具体文件名和代码行
+          make -j$(nproc) Image.gz-dtb modules || make -j1 Image.gz-dtb
 
       - name: 打包卡刷包
         run: |
