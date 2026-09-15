@@ -27,7 +27,7 @@ jobs:
           echo "TOOLCHAIN_64=$(pwd)/android-ndk-r14b/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin" >> $GITHUB_ENV
           echo "TOOLCHAIN_32=$(pwd)/android-ndk-r14b/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin" >> $GITHUB_ENV
 
-      - name: 拉取内核源码并修复环境适配
+      - name: 拉取内核源码并修复高通已知头文件与环境缺陷
         run: |
           git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git -b sagit-p-oss kernel
           cd kernel
@@ -39,8 +39,16 @@ jobs:
           # 2. 禁用高通 warning 阻断脚本
           find . -name "checkforwarnings.sh" -exec sh -c 'echo "#!/bin/sh" > "$1"; echo "exit 0" >> "$1"; chmod +x "$1"' _ {} \;
 
-          # 3. 修复 drivers/bluetooth 找不到 btfm_slim.h 头文件的问题
+          # 3. 修复 drivers/bluetooth 找不到 btfm_slim.h
           sed -i '1i ccflags-y += -I$(src)' drivers/bluetooth/Makefile
+
+          # 4. 修复 drivers/gpu/msm 找不到 kgsl_trace.h (核心报错修复)
+          sed -i '1i ccflags-y += -I$(src)\nCFLAGS_kgsl_trace.o += -I$(src)' drivers/gpu/msm/Makefile
+
+          # 5. 顺手预防 touchscreen 与 android trace 的同类 trace include 缺失
+          if [ -f drivers/staging/android/trace/Makefile ]; then
+              sed -i '1i ccflags-y += -I$(src)' drivers/staging/android/trace/Makefile
+          fi
 
       - name: 挂载 SukiSU 驱动目录并注入 4.4 手动 Hook
         run: |
@@ -82,7 +90,7 @@ jobs:
           cd kernel
           make sagit_user_defconfig
           
-          # 并行编译；若中断则自动单线程捕获末尾具体报错
+          # 并行编译，出错自动回显具体行号
           make -j$(nproc) Image.gz-dtb modules || make -j1 Image.gz-dtb
 
       - name: 打包卡刷包
